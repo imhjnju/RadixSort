@@ -1,0 +1,12 @@
+[submodule "benchmark_repos/VkRadixSort"]
+	path = benchmark_repos/VkRadixSort
+	url = https://github.com/imhjnju/VkRadixSort.git
+[submodule "benchmark_repos/embree-v4.0.0-ploc"]
+	path = benchmark_repos/embree-v4.0.0-ploc
+	url = https://github.com/RenderKit/embree.git
+[submodule "benchmark_repos/glm"]
+	path = benchmark_repos/glm
+	url = https://github.com/g-truc/glm.git
+[submodule "benchmark_repos/vulkan_radix_sort"]
+	path = benchmark_repos/vulkan_radix_sort
+	url = https://github.com/imhjnju/vulkan_radix_sort.git
