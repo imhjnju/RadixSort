@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vulkan_radix_sort 优化算法图解报告</title>
+  <style>
+    :root {
+      --bg: #020617;
+      --panel: #0f172a;
+      --panel2: #111827;
+      --line: #334155;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --blue: #60a5fa;
+      --yellow: #facc15;
+      --green: #22c55e;
+      --purple: #a78bfa;
+      --red: #fb7185;
+      --cyan: #22d3ee;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top left, #1e1b4b 0, var(--bg) 38%, #000 100%);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+    main { max-width: 1280px; margin: 0 auto; padding: 30px; }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 48px); line-height: 1.1; }
+    h2 { margin: 0 0 16px; font-size: 26px; }
+    h3 { margin: 0 0 10px; font-size: 18px; }
+    p { margin: 0 0 12px; }
+    code { color: #fef3c7; background: #020617; border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px; }
+    .hero { padding: 34px; border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(135deg, rgba(37,99,235,.2), rgba(15,23,42,.95)); box-shadow: 0 30px 80px rgba(0,0,0,.35); margin-bottom: 22px; }
+    .subtitle { color: #cbd5e1; font-size: 18px; max-width: 980px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+    .badge { border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; background: #020617; color: #bfdbfe; font-weight: 800; font-size: 13px; }
+    .panel { background: rgba(15,23,42,.94); border: 1px solid var(--line); border-radius: 20px; padding: 22px; margin-bottom: 20px; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    .card { background: #020617; border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+    .card strong { color: var(--yellow); }
+    .muted { color: var(--muted); }
+    .metric { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid #1e293b; }
+    .metric:last-child { border-bottom: 0; }
+    .metric .value { color: var(--green); font-size: 22px; font-weight: 950; }
+    .pipeline { display: grid; grid-template-columns: repeat(7, auto); align-items: center; gap: 10px; overflow-x: auto; padding: 8px 0; }
+    .stage { min-width: 150px; border-radius: 18px; border: 2px solid var(--line); background: #020617; padding: 16px; text-align: center; }
+    .stage .name { font-size: 18px; font-weight: 950; }
+    .stage .desc { color: var(--muted); font-size: 13px; margin-top: 6px; }
+    .upsweep { border-color: var(--green); }
+    .spine { border-color: var(--yellow); }
+    .downsweep { border-color: var(--purple); }
+    .swap { border-color: var(--cyan); }
+    .arrow { color: var(--yellow); font-size: 30px; font-weight: 1000; }
+    .memory-layout { display: grid; grid-template-columns: 1.1fr .9fr; gap: 18px; align-items: stretch; }
+    @media (max-width: 900px) { .memory-layout { grid-template-columns: 1fr; } .pipeline { grid-template-columns: 1fr; } .arrow { transform: rotate(90deg); text-align: center; } }
+    .partition-row { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: center; margin: 10px 0; }
+    .partition-label { color: #bfdbfe; font-weight: 900; }
+    .blocks { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
+    .cell { border-radius: 8px; text-align: center; padding: 8px 4px; font-size: 12px; font-weight: 850; background: #1e293b; border: 1px solid #475569; }
+    .d0 { background: rgba(34,197,94,.22); border-color: var(--green); }
+    .d1 { background: rgba(96,165,250,.22); border-color: var(--blue); }
+    .d2 { background: rgba(250,204,21,.22); border-color: var(--yellow); }
+    .d3 { background: rgba(167,139,250,.22); border-color: var(--purple); }
+    .histogram { display: grid; gap: 8px; }
+    .bar-row { display: grid; grid-template-columns: 74px 1fr 44px; gap: 10px; align-items: center; }
+    .bar { height: 22px; border-radius: 999px; background: #1e293b; overflow: hidden; border: 1px solid #334155; }
+    .bar span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--green), var(--cyan)); }
+    .formula { background: #020617; border: 1px solid var(--line); border-radius: 16px; padding: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #fef3c7; overflow-x: auto; }
+    .scatter-svg { width: 100%; min-height: 360px; background: #020617; border: 1px solid var(--line); border-radius: 18px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 820px; }
+    th, td { border: 1px solid var(--line); padding: 10px; text-align: center; }
+    th { color: #bfdbfe; background: #111827; }
+    td { background: #020617; }
+    .opt-card { position: relative; overflow: hidden; }
+    .opt-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: linear-gradient(90deg, var(--green), var(--blue), var(--purple)); }
+    .tag { display: inline-block; color: #111827; background: var(--yellow); border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 950; margin-bottom: 10px; }
+    .trade { border-left: 4px solid var(--red); }
+    .source { color: #cbd5e1; font-size: 13px; }
+    .source li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>vulkan_radix_sort 优化算法图解报告</h1>
+      <p class="subtitle">分析 <code>jaesung-cs/vulkan_radix_sort</code> 的 GPU radix sort：它如何把一轮 8-bit sort 拆成 <strong>upsweep → spine → downsweep</strong>，并通过局部 histogram、prefix scan、shared-memory 重排和 ping-pong buffer 提升吞吐。</p>
+      <div class="badges">
+        <span class="badge">RADIX = 256</span>
+        <span class="badge">WORKGROUP_SIZE = 512</span>
+        <span class="badge">PARTITION_SIZE = 4096</span>
+        <span class="badge">4 passes × 8 bits</span>
+        <span class="badge">Vulkan compute</span>
+      </div>
+    </section>
+
+    <section class="panel grid grid-2">
+      <div class="card">
+        <h2>一句话总结</h2>
+        <p>这个实现快的关键不是“直接 parallel scatter”，而是先把全局排序拆成 partition 局部问题，再用 prefix scan 合成全局偏移，最后在 downsweep 中先用 shared memory 把同 radix 元素聚合，让 global write 更接近连续。</p>
+        <div class="formula">pos ≈ globalBucketBase[d] + partitionPrefix[p][d] + localRankWithinPartition[d]</div>
+      </div>
+      <div class="card">
+        <h2>已测性能背景</h2>
+        <div class="metric"><span>keys-only, N = 2²⁰</span><span class="value">~0.715 ms</span></div>
+        <div class="metric"><span>key-value, N = 2²⁰</span><span class="value">~0.799 ms</span></div>
+        <div class="metric"><span>相对 VkRadixSort multi</span><span class="value">~2.4×</span></div>
+        <p class="muted">硬件记录：NVIDIA Tegra Thor；结果来自本地 benchmark 观察。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>一轮 radix pass 的 GPU pipeline</h2>
+      <div class="pipeline">
+        <div class="stage upsweep"><div class="name">Upsweep</div><div class="desc">partition local histogram</div></div>
+        <div class="arrow">→</div>
+        <div class="stage spine"><div class="name">Spine</div><div class="desc">prefix scan histograms</div></div>
+        <div class="arrow">→</div>
+        <div class="stage downsweep"><div class="name">Downsweep</div><div class="desc">stable scatter</div></div>
+        <div class="arrow">→</div>
+        <div class="stage swap"><div class="name">Ping-pong</div><div class="desc">swap input/output buffers</div></div>
+      </div>
+      <p class="muted">host 端每轮 dispatch：<code>upsweep(partitionCount)</code> → barrier → <code>spine(256)</code> → barrier → <code>downsweep(partitionCount)</code>。</p>
+    </section>
+
+    <section class="panel memory-layout">
+      <div>
+        <h2>Partition 化：把全局问题切成局部问题</h2>
+        <p>每个 workgroup 处理 4096 个元素。这样可以先在 shared memory 里统计局部 histogram，再把每个 partition 的 256 个 bucket 计数写到 <code>partitionHistogram</code>。</p>
+        <div class="partition-row"><div class="partition-label">Partition 0</div><div class="blocks"><div class="cell d1">257a</div><div class="cell d1">1</div><div class="cell d1">257b</div><div class="cell d1">513</div><div class="cell d2">2</div><div class="cell d2">258</div><div class="cell d0">0</div><div class="cell d0">256</div></div></div>
+        <div class="partition-row"><div class="partition-label">Partition 1</div><div class="blocks"><div class="cell d3">3</div><div class="cell d3">259</div><div class="cell d0">512</div><div class="cell d2">770</div><div class="cell d1">1025</div><div class="cell d2">6</div><div class="cell d3">7</div><div class="cell d0">768</div></div></div>
+        <p class="muted">图中颜色表示当前 pass 的 digit。真实实现是 256 个 bucket，这里用少量颜色帮助理解。</p>
+      </div>
+      <div class="card">
+        <h3>为什么 PARTITION_SIZE = 4096 有用？</h3>
+        <div class="histogram">
+          <div class="bar-row"><span>dispatch</span><div class="bar"><span style="width:36%"></span></div><span>少</span></div>
+          <div class="bar-row"><span>hist size</span><div class="bar"><span style="width:42%"></span></div><span>低</span></div>
+          <div class="bar-row"><span>scan work</span><div class="bar"><span style="width:48%"></span></div><span>低</span></div>
+          <div class="bar-row"><span>local work</span><div class="bar"><span style="width:88%"></span></div><span>高</span></div>
+        </div>
+        <p class="muted">partition 太小会增加 partition 数量、histogram 规模和 spine scan 成本；4096 更偏吞吐优化。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Upsweep：局部 histogram 降低 global atomic 压力</h2>
+      <div class="grid grid-3">
+        <div class="card opt-card"><span class="tag">朴素做法</span><h3>每个元素直接打 global atomic</h3><div class="formula">atomic_add(globalHistogram[digit], 1)</div><p class="muted">大量线程竞争同一组全局 bucket，global atomic 压力高。</p></div>
+        <div class="card opt-card"><span class="tag">jaesung 做法</span><h3>先打 shared local histogram</h3><div class="formula">atomic_add(localHistogram[digit], 1)</div><p class="muted">竞争被限制在 workgroup 内，shared atomic 通常更便宜。</p></div>
+        <div class="card opt-card"><span class="tag">写出</span><h3>每 partition 每 bucket 写一次</h3><div class="formula">partitionHistogram[p][d] = localHistogram[d]</div><p class="muted">全局写入规模变成 partitionCount × 256。</p></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Spine：扫描 partitionHistogram 得到全局 scatter 偏移</h2>
+      <p>Spine 阶段固定 dispatch 256 个 workgroup：一个 radix bucket 一个 workgroup。每个 workgroup 扫描所有 partition 在该 bucket 上的计数。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>digit</th><th>global bucket base</th><th>partition 0 prefix</th><th>partition 1 prefix</th><th>partition 2 prefix</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td>d0</td><td>0</td><td>0</td><td>2</td><td>5</td><td>每个 partition 中 d0 的全局起点</td></tr>
+            <tr><td>d1</td><td>8</td><td>0</td><td>4</td><td>6</td><td>先跳过所有 d0，再加本 bucket 内 partition prefix</td></tr>
+            <tr><td>d2</td><td>16</td><td>0</td><td>2</td><td>5</td><td>同理</td></tr>
+            <tr><td>d3</td><td>24</td><td>0</td><td>1</td><td>3</td><td>同理</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">真实代码中使用 wave-level prefix sum 来做这些 scan，减少显式循环和同步开销。</p>
+    </section>
+
+    <section class="panel">
+      <h2>Downsweep：稳定 scatter 的关键公式</h2>
+      <div class="formula">dst = globalHistogramPrefix[digit]
+    + partitionHistogramPrefix[partition][digit]
+    + localRankWithinPartition[digit]</div>
+      <p>优化核心是如何高效得到 <code>localRankWithinPartition</code>，以及如何让最终 global write 更连续。</p>
+      <div class="grid grid-3">
+        <div class="card"><h3>1. Wave ballot</h3><p>用 wave ballot 找出同一个 wave 中 digit 相同的 lane。</p><div class="formula">mask = WaveActiveBallot(sameDigit)</div></div>
+        <div class="card"><h3>2. Wave 内 rank</h3><p>计算当前 lane 前面有多少个相同 digit 的元素。</p><div class="formula">waveOffset = popcount(mask & laneMask)</div></div>
+        <div class="card"><h3>3. 代表线程 atomic</h3><p>同一个 wave 内同 digit 只选代表去更新 shared histogram。</p><div class="formula">if waveOffset == 0: atomic_add(...)</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Scatter 映射图：从随机写变成更连续的写</h2>
+      <svg class="scatter-svg" viewBox="0 0 1100 360" role="img" aria-label="scatter mapping diagram">
+        <defs>
+          <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#facc15" /></marker>
+          <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#22c55e"/><stop offset="1" stop-color="#22d3ee"/></linearGradient>
+        </defs>
+        <text x="40" y="38" fill="#bfdbfe" font-size="22" font-weight="800">data / input order</text>
+        <text x="820" y="38" fill="#bfdbfe" font-size="22" font-weight="800">output grouped by digit</text>
+        <text x="430" y="38" fill="#facc15" font-size="22" font-weight="800">shared-memory grouping</text>
+
+        <g font-size="15" font-weight="800" text-anchor="middle">
+          <rect x="30" y="70" width="80" height="46" rx="12" fill="#1e293b" stroke="#60a5fa"/><text x="70" y="99" fill="#e5e7eb">257a d1</text>
+          <rect x="30" y="125" width="80" height="46" rx="12" fill="#1e293b" stroke="#22c55e"/><text x="70" y="154" fill="#e5e7eb">0 d0</text>
+          <rect x="30" y="180" width="80" height="46" rx="12" fill="#1e293b" stroke="#a78bfa"/><text x="70" y="209" fill="#e5e7eb">3 d3</text>
+          <rect x="30" y="235" width="80" height="46" rx="12" fill="#1e293b" stroke="#60a5fa"/><text x="70" y="264" fill="#e5e7eb">1 d1</text>
+        </g>
+
+        <g font-size="15" font-weight="800" text-anchor="middle">
+          <rect x="430" y="70" width="100" height="46" rx="12" fill="#052e16" stroke="#22c55e"/><text x="480" y="99" fill="#e5e7eb">bucket d0</text>
+          <rect x="430" y="125" width="100" height="46" rx="12" fill="#172554" stroke="#60a5fa"/><text x="480" y="154" fill="#e5e7eb">bucket d1</text>
+          <rect x="430" y="180" width="100" height="46" rx="12" fill="#422006" stroke="#facc15"/><text x="480" y="209" fill="#e5e7eb">bucket d2</text>
+          <rect x="430" y="235" width="100" height="46" rx="12" fill="#2e1065" stroke="#a78bfa"/><text x="480" y="264" fill="#e5e7eb">bucket d3</text>
+        </g>
+
+        <g font-size="15" font-weight="800" text-anchor="middle">
+          <rect x="860" y="70" width="90" height="46" rx="12" fill="#052e16" stroke="#22c55e"/><text x="905" y="99" fill="#e5e7eb">out[0]</text>
+          <rect x="860" y="125" width="90" height="46" rx="12" fill="#172554" stroke="#60a5fa"/><text x="905" y="154" fill="#e5e7eb">out[8]</text>
+          <rect x="860" y="180" width="90" height="46" rx="12" fill="#172554" stroke="#60a5fa"/><text x="905" y="209" fill="#e5e7eb">out[9]</text>
+          <rect x="860" y="235" width="90" height="46" rx="12" fill="#2e1065" stroke="#a78bfa"/><text x="905" y="264" fill="#e5e7eb">out[24]</text>
+        </g>
+
+        <path d="M115 94 C220 94, 300 148, 425 148" stroke="#facc15" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+        <path d="M115 148 C220 148, 300 94, 425 94" stroke="#facc15" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+        <path d="M115 204 C230 204, 300 258, 425 258" stroke="#facc15" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+        <path d="M115 259 C230 259, 300 150, 425 150" stroke="#facc15" stroke-width="3" fill="none" marker-end="url(#arrow)"/>
+
+        <path d="M535 94 C650 94, 720 94, 855 94" stroke="url(#g)" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+        <path d="M535 149 C650 149, 720 149, 855 149" stroke="url(#g)" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+        <path d="M535 149 C650 149, 720 204, 855 204" stroke="url(#g)" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+        <path d="M535 259 C650 259, 720 259, 855 259" stroke="url(#g)" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+
+        <text x="390" y="325" fill="#cbd5e1" font-size="18">先在 shared memory 中按 digit 聚合</text>
+        <text x="735" y="325" fill="#cbd5e1" font-size="18">再写 global memory，地址更接近连续</text>
+      </svg>
+    </section>
+
+    <section class="panel">
+      <h2>优化点卡片</h2>
+      <div class="grid grid-3">
+        <div class="card opt-card"><span class="tag">01</span><h3>大 partition</h3><p><strong>4096 elements/workgroup</strong>，减少 partition 数量和 spine scan 长度。</p></div>
+        <div class="card opt-card"><span class="tag">02</span><h3>local histogram</h3><p>把每元素 global atomic 替换成 shared memory 局部统计。</p></div>
+        <div class="card opt-card"><span class="tag">03</span><h3>partition histogram</h3><p>记录每个 partition 的 bucket 计数，让全局 scatter 可分解。</p></div>
+        <div class="card opt-card"><span class="tag">04</span><h3>per-radix spine scan</h3><p>固定 256 个 workgroup，每个 bucket 独立扫描所有 partition。</p></div>
+        <div class="card opt-card"><span class="tag">05</span><h3>wave ballot rank</h3><p>用 subgroup 操作计算 wave 内相同 digit 的 local rank。</p></div>
+        <div class="card opt-card"><span class="tag">06</span><h3>representative atomic</h3><p>同 wave 同 digit 只由代表线程 atomic，减少 shared atomic 次数。</p></div>
+        <div class="card opt-card"><span class="tag">07</span><h3>shared rearrange</h3><p>先在 shared memory 按 digit 重排，再连续写出，是 downsweep 的关键优化。</p></div>
+        <div class="card opt-card"><span class="tag">08</span><h3>key-only / key-value 分离</h3><p>key-only shader 不承担 value 搬运成本；key-value 才启用额外路径。</p></div>
+        <div class="card opt-card"><span class="tag">09</span><h3>ping-pong buffers</h3><p>每轮 input → output，然后交换 descriptor，避免 in-place scatter 冲突。</p></div>
+      </div>
+    </section>
+
+    <section class="panel grid grid-2">
+      <div class="card">
+        <h2>性能诊断摘要</h2>
+        <div class="metric"><span>瓶颈类型</span><span class="value">memory/scatter dominated</span></div>
+        <div class="metric"><span>主要杠杆</span><span class="value">write coalescing</span></div>
+        <div class="metric"><span>正确性门槛</span><span class="value">stable order</span></div>
+        <p class="muted">radix sort 的算术很少，吞吐通常受内存访问、atomic、barrier 和 scatter 地址形态影响。</p>
+      </div>
+      <div class="card trade">
+        <h2>Trade-off</h2>
+        <p><strong>优点：</strong>高吞吐、无 CPU readback、适合 GPU pipeline 串接、key-only 路径干净。</p>
+        <p><strong>代价：</strong>shader 复杂、shared memory 用量高、依赖 wave/subgroup、每轮 3 个 dispatch + barrier，小 N 不一定划算。</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>和朴素 GPU radix sort 的差异</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>问题</th><th>朴素方案</th><th>vulkan_radix_sort</th><th>收益</th></tr></thead>
+          <tbody>
+            <tr><td>histogram</td><td>每元素 global atomic</td><td>shared local histogram + partition writeback</td><td>降低 global atomic 压力</td></tr>
+            <tr><td>prefix</td><td>单一大 scan 或 CPU 辅助</td><td>per-radix spine GPU scan</td><td>全 GPU，结构规则</td></tr>
+            <tr><td>rank</td><td>atomic_add 得位置</td><td>wave ballot + local scan</td><td>减少 per-element atomic</td></tr>
+            <tr><td>scatter</td><td>随机 global write</td><td>shared memory 聚合后更连续写</td><td>提高内存写吞吐</td></tr>
+            <tr><td>多轮</td><td>可能复制或复杂原地搬移</td><td>ping-pong buffer</td><td>简单、稳定、易同步</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>源码证据定位</h2>
+      <ul class="source">
+        <li><code>src/shader/constants.slang</code>：<code>RADIX=256</code>、<code>WORKGROUP_SIZE=512</code>、<code>PARTITION_SIZE=4096</code>。</li>
+        <li><code>src/shader/upsweep.slang</code>：partition local histogram，写 <code>partitionHistogram</code> 和 <code>globalHistogram</code>。</li>
+        <li><code>src/shader/spine.slang</code>：<code>dispatch(RADIX,1,1)</code>，每个 radix workgroup 扫描 partition histogram。</li>
+        <li><code>src/shader/downsweep.slang</code>：wave ballot、local rank、多级 shared scan、shared memory rearrange、global scatter。</li>
+        <li><code>src/vk_radix_sort.h.in</code>：host 端 4-pass loop、upsweep/spine/downsweep dispatch、barrier、descriptor ping-pong。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

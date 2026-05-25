@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radix Sort 算法性能比较与分析报告</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fb;
+      --paper: #ffffff;
+      --text: #172033;
+      --muted: #5f6b7a;
+      --border: #d8dee9;
+      --accent: #2557d6;
+      --accent-soft: #eef3ff;
+      --code-bg: #111827;
+      --code-text: #e5e7eb;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", Arial, sans-serif;
+      line-height: 1.65;
+    }
+    main {
+      max-width: 1080px;
+      margin: 32px auto;
+      padding: 42px 52px;
+      background: var(--paper);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 12px 34px rgba(18, 30, 55, 0.08);
+    }
+    h1, h2, h3 {
+      line-height: 1.25;
+      color: #101827;
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 34px;
+      border-bottom: 3px solid var(--accent);
+      padding-bottom: 16px;
+    }
+    h2 {
+      margin-top: 36px;
+      font-size: 25px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 8px;
+    }
+    h3 {
+      margin-top: 28px;
+      font-size: 20px;
+    }
+    p, li {
+      font-size: 16px;
+    }
+    .meta {
+      color: var(--muted);
+      margin-bottom: 24px;
+    }
+    .summary {
+      background: var(--accent-soft);
+      border-left: 5px solid var(--accent);
+      padding: 18px 22px;
+      border-radius: 10px;
+      margin: 22px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 18px 0 26px;
+      font-size: 15px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f3f8;
+      font-weight: 700;
+    }
+    td.num, th.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      background: #eef1f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+    pre {
+      overflow-x: auto;
+      background: var(--code-bg);
+      color: var(--code-text);
+      padding: 16px 18px;
+      border-radius: 10px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+    .note {
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .verdict {
+      font-size: 18px;
+      font-weight: 700;
+    }
+    @media print {
+      body { background: #fff; }
+      main { box-shadow: none; border: none; margin: 0; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Radix Sort 算法性能比较与分析报告</h1>
+  <p class="meta">生成日期：2026-05-12<br>平台：NVIDIA Tegra Thor</p>
+
+  <section class="summary">
+    <p class="verdict">结论：在当前 NVIDIA Tegra Thor 上，<code>jaesung-cs/vulkan_radix_sort</code> 是本轮实测最快方法；Embree CUDA port 稳定排第二；<code>MircoWerner/VkRadixSort</code> multi keys-only 明显更慢且存在长尾波动。</p>
+  </section>
+
+  <h2>1. 比较对象</h2>
+  <ol>
+    <li><code>jaesung-cs/vulkan_radix_sort</code></li>
+    <li><code>MircoWerner/VkRadixSort</code> multi variant</li>
+    <li>Embree <code>v4.0.0-ploc</code> <code>sort.h</code> radix sort 的 CUDA port</li>
+  </ol>
+
+  <h2>2. 结果摘要</h2>
+  <table>
+    <thead>
+      <tr>
+        <th class="num">排名</th>
+        <th>方法</th>
+        <th class="num">keys-only 时间</th>
+        <th class="num">keys-only 吞吐</th>
+        <th class="num">key-value 时间</th>
+        <th class="num">key-value 吞吐</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="num">1</td>
+        <td>jaesung-cs/vulkan_radix_sort</td>
+        <td class="num">0.714592 ms</td>
+        <td class="num">1.467 GItems/s</td>
+        <td class="num">0.812640 ms</td>
+        <td class="num">1.290 GItems/s</td>
+      </tr>
+      <tr>
+        <td class="num">2</td>
+        <td>Embree sort CUDA port</td>
+        <td class="num">1.066560 ms</td>
+        <td class="num">0.983 GItems/s</td>
+        <td class="num">1.360991 ms</td>
+        <td class="num">0.770 GItems/s</td>
+      </tr>
+      <tr>
+        <td class="num">3</td>
+        <td>MircoWerner/VkRadixSort multi</td>
+        <td class="num">p50 ≈ 2.250 ms</td>
+        <td class="num">≈ 0.466 GItems/s</td>
+        <td class="num">未测</td>
+        <td class="num">未测</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. 实验配置</h2>
+  <table>
+    <tbody>
+      <tr><th>GPU</th><td>NVIDIA Tegra NVIDIA Thor</td></tr>
+      <tr><th>NVIDIA Driver</th><td>580.00</td></tr>
+      <tr><th>CUDA</th><td>13.0 / nvcc 13.0.48</td></tr>
+      <tr><th>Vulkan Device API</th><td>1.4.315</td></tr>
+      <tr><th>输入规模</th><td>N = 1,048,576 = 2^20</td></tr>
+      <tr><th>数据类型</th><td>32-bit keys；32-bit key + 32-bit value</td></tr>
+    </tbody>
+  </table>
+
+  <p>正确性基准：</p>
+  <ul>
+    <li>keys-only：与 CPU <code>std::sort</code> 结果逐元素比较。</li>
+    <li>key-value：与 CPU stable sort by key 的结果逐元素比较。</li>
+  </ul>
+
+  <h2>4. 算法结构分析</h2>
+
+  <h3>4.1 jaesung-cs/vulkan_radix_sort</h3>
+  <p>该方法采用 Vulkan compute shader 实现 4-pass 8-bit radix sort。每一轮处理 8 bit，因此 32-bit key 需要 4 轮。</p>
+  <pre><code>upsweep → spine → downsweep</code></pre>
+  <p>三阶段含义：</p>
+  <table>
+    <thead>
+      <tr><th>阶段</th><th>作用</th><th>性能意义</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>upsweep</td><td>按 partition/workgroup 统计局部 256-bin histogram</td><td>局部计数，适合 workgroup 并行</td></tr>
+      <tr><td>spine</td><td>对所有 partition histogram 做全局 prefix-sum</td><td>集中计算全局 offset，避免 scatter 阶段重复扫描</td></tr>
+      <tr><td>downsweep</td><td>根据预计算 offset 执行 scatter</td><td>scatter 阶段只消费 offset，减少全局内存冗余</td></tr>
+    </tbody>
+  </table>
+  <p>该方法的主要优势是将 histogram prefix 工作集中到 <code>spine</code> 阶段完成，使 scatter 阶段无需每个 workgroup 重复累加大量 histogram offset。</p>
+
+  <h3>4.2 MircoWerner/VkRadixSort multi</h3>
+  <p><code>VkRadixSort</code> multi 也属于多 workgroup radix sort，但与 jaesung 的三阶段 pipeline 不同。它的主要问题不是单个 shader 指令慢，而是算法结构中存在更明显的重复工作。</p>
+  <ul>
+    <li>每个 workgroup 在计算 scatter offset 时会重复读取或累加较多 histogram 信息。</li>
+    <li>对 <code>N = 2^20</code> 这类规模，重复 histogram offset 计算会显著放大全局内存访问量。</li>
+    <li>example 程序使用 CPU wall-clock 计时，包含提交、等待等 host 侧开销。</li>
+    <li>本轮 10 次运行出现长尾，最大值达到 <code>160.228 ms</code>。</li>
+  </ul>
+
+  <h3>4.3 Embree sort CUDA port</h3>
+  <p>Embree 原始路径来自 <code>Embree v4.0.0-ploc/kernels/rthwif/builder/gpu/sort.h</code>。原始 Embree GPU sort 是 SYCL/Level Zero/Intel GPU oriented 的实现，不能在当前 NVIDIA Tegra Thor 上直接公平运行。因此本轮实现的是 CUDA port。</p>
+  <pre><code>Embree v4.0.0-ploc radix_sort_Nx8Bit CUDA port (separate prefix kernel)</code></pre>
+  <p>当前 CUDA port 保留 Embree large radix sort 的核心思路：</p>
+  <ul>
+    <li>8-bit radix，256 bins。</li>
+    <li>512 threads/block。</li>
+    <li>多 DSS/workgroup 分块。</li>
+    <li>每个 pass 先统计 histogram，再计算 offset，再 scatter。</li>
+    <li>keys-only 与 key-value 都通过 CPU reference correctness check。</li>
+  </ul>
+  <pre><code>binning kernel → build-offsets kernel → scatter kernel</code></pre>
+  <p>需要强调：该实现不是原始 Embree SYCL kernel 的逐行翻译，也不是原始 Intel GPU 后端性能。它适合作为“Embree radix sort 思路在 NVIDIA Thor 上的 CUDA 移植版本”参与比较。</p>
+
+  <h2>5. 实测数据</h2>
+
+  <h3>5.1 jaesung-cs/vulkan_radix_sort</h3>
+  <pre><code>vulkan,1048576,keys,0.714592,0.781224,1.467377,1.342222
+vulkan,1048576,kv,0.812640,0.945454,1.290333,1.109071</code></pre>
+  <table>
+    <thead>
+      <tr><th>sort</th><th class="num">GPU time</th><th class="num">CPU wall time</th><th class="num">GPU throughput</th><th class="num">CPU throughput</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>keys</td><td class="num">0.714592 ms</td><td class="num">0.781224 ms</td><td class="num">1.467377 GItems/s</td><td class="num">1.342222 GItems/s</td></tr>
+      <tr><td>kv</td><td class="num">0.812640 ms</td><td class="num">0.945454 ms</td><td class="num">1.290333 GItems/s</td><td class="num">1.109071 GItems/s</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5.2 Embree CUDA port</h3>
+  <pre><code>embree-cuda,1048576,keys,1.066560,1.176933,0.983138,0.890939
+embree-cuda,1048576,kv,1.360991,1.391450,0.770450,0.753585</code></pre>
+  <table>
+    <thead>
+      <tr><th>sort</th><th class="num">GPU time</th><th class="num">CPU wall time</th><th class="num">GPU throughput</th><th class="num">CPU throughput</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>keys</td><td class="num">1.066560 ms</td><td class="num">1.176933 ms</td><td class="num">0.983138 GItems/s</td><td class="num">0.890939 GItems/s</td></tr>
+      <tr><td>kv</td><td class="num">1.360991 ms</td><td class="num">1.391450 ms</td><td class="num">0.770450 GItems/s</td><td class="num">0.753585 GItems/s</td></tr>
+    </tbody>
+  </table>
+
+  <h3>5.3 MircoWerner/VkRadixSort multi</h3>
+  <p>本轮 repeated runs：</p>
+  <pre><code>1.967, 2.342, 2.159, 4.012, 0.956,
+8.534, 160.228, 9.487, 1.549, 1.334 ms</code></pre>
+  <table>
+    <thead><tr><th>指标</th><th class="num">时间</th></tr></thead>
+    <tbody>
+      <tr><td>min</td><td class="num">0.956 ms</td></tr>
+      <tr><td>p50</td><td class="num">≈ 2.250 ms</td></tr>
+      <tr><td>max</td><td class="num">160.228 ms</td></tr>
+      <tr><td>mean</td><td class="num">19.257 ms</td></tr>
+    </tbody>
+  </table>
+  <p class="note">说明：当前结果是 keys-only，且计时来自 example 程序的 CPU wall-clock 输出，不是统一 benchmark harness 的 GPU timestamp median。</p>
+
+  <h2>6. 相对性能</h2>
+  <h3>6.1 keys-only</h3>
+  <pre><code>jaesung Vulkan:       0.714592 ms
+Embree CUDA port:     1.066560 ms
+VkRadixSort multi:   ≈2.250 ms p50</code></pre>
+  <ul>
+    <li>jaesung Vulkan ≈ 1.49× faster than Embree CUDA port</li>
+    <li>jaesung Vulkan ≈ 3.15× faster than VkRadixSort multi p50</li>
+    <li>Embree CUDA port ≈ 2.11× faster than VkRadixSort multi p50</li>
+  </ul>
+
+  <h3>6.2 key-value</h3>
+  <pre><code>jaesung Vulkan:     0.812640 ms
+Embree CUDA port:   1.360991 ms</code></pre>
+  <p>jaesung Vulkan ≈ 1.67× faster than Embree CUDA port。</p>
+
+  <h2>7. 为什么 jaesung-cs/vulkan_radix_sort 优势明显</h2>
+  <p>主要原因是算法级别的工作量差异，而不是简单的 API 差异。</p>
+  <ol>
+    <li><strong>全局 prefix 只做一次：</strong>jaesung 的 <code>upsweep → spine → downsweep</code> 结构将 histogram prefix-sum 集中到 spine 阶段。</li>
+    <li><strong>避免 per-workgroup 重复 histogram 扫描：</strong>scatter 阶段使用预计算 offset，不需要每个 workgroup 重新处理大量历史 histogram。</li>
+    <li><strong>更适合现代 GPU 的三阶段流水：</strong>局部计数、全局 prefix、scatter 三类工作被拆分到更适合的阶段。</li>
+    <li><strong>计时边界更干净：</strong>jaesung benchmark 使用 Vulkan timestamp 计 GPU 排序段；当前 Thor 上 timestamp period 为 <code>1</code>。</li>
+  </ol>
+
+  <h2>8. 公平性与限制</h2>
+  <p>本轮已经做到：</p>
+  <ul>
+    <li>三者统一 <code>N = 1,048,576</code>。</li>
+    <li>jaesung Vulkan 与 Embree CUDA port 使用同一个 benchmark driver。</li>
+    <li>两者都执行 1 warmup + 10 timed runs，并取 median。</li>
+    <li>两者都通过 CPU reference correctness check。</li>
+    <li>Vulkan timestamp period 已核对为 <code>1</code>。</li>
+  </ul>
+  <p>仍需注意：</p>
+  <ol>
+    <li><strong>GPU contention：</strong>本轮开始时 GPU util 接近 98%，存在其他 GPU-heavy 进程，因此结果可能受系统负载影响。</li>
+    <li><strong>VkRadixSort 计时口径不同：</strong>VkRadixSort multi 结果来自原 example 的 wall-clock 输出，不是统一 harness 的 GPU timestamp median。</li>
+    <li><strong>Embree CUDA port 不是原始 Embree GPU 后端：</strong>它是为了在 NVIDIA Thor 上运行而实现的 CUDA port，应标注为 port。</li>
+    <li><strong>Embree 原始应用场景不同：</strong>Embree PLOC 中 radix sort 常与 Morton code、BVH builder 数据结构绑定；本轮使用通用 32-bit key/key-value workload。</li>
+  </ol>
+
+  <h2>9. 建议后续实验</h2>
+  <h3>9.1 清空 GPU 干扰后重跑</h3>
+  <pre><code>benchmark_repos/vulkan_radix_sort/build_embree_cuda/bench \
+  vulkan /tmp/radix_vulkan.csv 1048576
+
+benchmark_repos/vulkan_radix_sort/build_embree_cuda/bench \
+  embree-cuda /tmp/radix_embree_cuda.csv 1048576
+
+printf '0\n' | \
+  benchmark_repos/VkRadixSort/build/multiradixsort/multiradixsortexample</code></pre>
+
+  <h3>9.2 给 VkRadixSort 增加同口径 GPU timestamp</h3>
+  <ul>
+    <li>同样 1 warmup + 10 timed runs。</li>
+    <li>输出 median/p95/max。</li>
+    <li>区分 GPU-only sort time 与 CPU wall time。</li>
+    <li>加入 correctness check。</li>
+  </ul>
+
+  <h3>9.3 增加多 N 曲线</h3>
+  <pre><code>262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216</code></pre>
+  <p>建议输出 GPU time vs N、throughput vs N、p50/p95/max vs N，并区分 keys-only 与 key-value。</p>
+
+  <h3>9.4 增加 Embree Morton64 fidelity benchmark</h3>
+  <p>如果目标是评估 Embree PLOC 原始应用语境，应补充 Morton64 数据路径，并与 32-bit 通用排序分开报告。</p>
+
+  <h2>10. 最终判断</h2>
+  <pre><code>1. jaesung-cs/vulkan_radix_sort
+2. Embree sort CUDA port
+3. MircoWerner/VkRadixSort multi</code></pre>
+  <p><code>jaesung-cs/vulkan_radix_sort</code> 的优势主要来自算法 pipeline 的全局 work 分解：它把 histogram prefix 工作集中到 spine 阶段，scatter 阶段只消费预计算 offset，因此避免了 <code>VkRadixSort</code> multi 中大量 per-workgroup 重复 histogram offset 计算。</p>
+  <p>Embree CUDA port 的结果说明 Embree large radix sort 思路可以在 NVIDIA Thor 上正确运行，但当前 CUDA port 的三 kernel/pass 结构和原始 Embree SYCL 实现并非完全等价，性能也落后于 jaesung 的 Vulkan pipeline。</p>
+  <p class="note">如果需要发布最终 benchmark，建议先在无 GPU contention 的环境下重跑，并为 <code>VkRadixSort</code> 增加同口径 GPU timestamp median 后再定稿。</p>
+</main>
+</body>
+</html>

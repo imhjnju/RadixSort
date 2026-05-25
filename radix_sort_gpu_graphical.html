@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GPU Radix Sort 优化算法图形演示</title>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #020617; color: #e5e7eb; }
+    main { max-width: 1280px; margin: 0 auto; padding: 28px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin: 0 0 12px; }
+    .subtitle { margin: 0 0 24px; color: #94a3b8; line-height: 1.6; }
+    .panel { background: #0f172a; border: 1px solid #334155; border-radius: 18px; padding: 20px; margin-bottom: 18px; box-shadow: 0 18px 40px rgba(0,0,0,.25); }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; }
+    button { border: 0; border-radius: 10px; padding: 10px 14px; color: white; background: #2563eb; font-weight: 800; cursor: pointer; }
+    button.secondary { background: #475569; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .phasebar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 14px; }
+    .phase { text-align: center; padding: 10px; border-radius: 12px; background: #020617; border: 1px solid #334155; color: #94a3b8; font-weight: 900; }
+    .phase.active { color: #111827; background: #facc15; border-color: #facc15; }
+    .stage-title { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; margin-bottom: 10px; }
+    .stage-title h2 { margin: 0; font-size: 22px; }
+    .stage-title span { color: #93c5fd; font-weight: 900; }
+    .explain { color: #cbd5e1; line-height: 1.7; margin: 8px 0 0; }
+    .formula { display: inline-block; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: #020617; border: 1px solid #334155; color: #fef3c7; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .array { display: flex; flex-wrap: wrap; gap: 9px; min-height: 84px; }
+    .card { width: 80px; min-height: 76px; border-radius: 14px; display: grid; place-items: center; background: #1e293b; border: 2px solid #475569; }
+    .card.temp { background: #312e81; border-color: #818cf8; }
+    .card.empty { background: #020617; border-style: dashed; color: #64748b; }
+    .num { font-size: 20px; font-weight: 950; }
+    .meta { color: #bfdbfe; font-size: 12px; margin-top: 2px; }
+    .row-label { color: #93c5fd; font-weight: 900; margin: 0 0 8px; }
+    .row { margin-bottom: 18px; }
+    .blocks { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+    .block { border-radius: 16px; background: #020617; border: 1px solid #334155; padding: 14px; }
+    .block-title { font-weight: 950; color: #facc15; margin-bottom: 10px; }
+    .threads { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .thread { border-radius: 12px; padding: 8px; min-width: 54px; background: #1e293b; border: 1px solid #475569; text-align: center; font-weight: 800; }
+    .hist { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+    .hist-cell { border-radius: 10px; padding: 8px; background: #111827; border: 1px solid #334155; text-align: center; }
+    .hist-cell.hot { border-color: #22c55e; background: #052e16; }
+    .matrix { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td { border: 1px solid #334155; padding: 9px; text-align: center; }
+    th { background: #111827; color: #93c5fd; }
+    td { background: #020617; }
+    .mapping-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 10px; }
+    .map-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px; border-radius: 12px; background: #020617; border: 1px solid #334155; }
+    .node { padding: 8px 10px; border-radius: 10px; background: #1e293b; font-weight: 950; text-align: center; min-width: 76px; }
+    .node.temp-node { background: #312e81; border: 1px solid #818cf8; }
+    .arrow { color: #facc15; font-size: 24px; font-weight: 1000; }
+    .detail { color: #bfdbfe; font-size: 12px; margin-top: 2px; }
+    .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+    .note { border-radius: 14px; background: #020617; border: 1px solid #334155; padding: 12px; }
+    .note strong { color: #facc15; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>GPU Radix Sort 优化算法图形演示</h1>
+    <p class="subtitle">这里演示一轮 2-bit radix pass。真实 GPU 实现常用 4/8 bit 一轮；本页用 4 个 bucket 降低视觉复杂度，但数据流和优化思想相同。</p>
+
+    <section class="panel">
+      <div class="controls">
+        <button id="prev">上一步</button>
+        <button id="next">下一步</button>
+        <button id="play">自动播放</button>
+        <button id="reset" class="secondary">重置</button>
+      </div>
+      <div class="phasebar" id="phasebar"></div>
+    </section>
+
+    <section class="panel">
+      <div class="stage-title">
+        <h2 id="title"></h2>
+        <span id="pass"></span>
+      </div>
+      <p class="explain" id="explain"></p>
+      <div class="formula" id="formula"></div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <div class="row-label">input buffer</div>
+        <div class="array" id="inputArray"></div>
+      </div>
+      <div class="row">
+        <div class="row-label">output buffer</div>
+        <div class="array" id="outputArray"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>1. block histogram：每个 workgroup / block 先做局部统计</h2>
+      <div class="blocks" id="blocks"></div>
+    </section>
+
+    <section class="panel">
+      <h2>2. global prefix / scan：把局部 histogram 扫成全局偏移</h2>
+      <div class="matrix" id="scanMatrix"></div>
+    </section>
+
+    <section class="panel">
+      <h2>3. parallel scatter：每个元素计算自己的目标位置</h2>
+      <div class="mapping-grid" id="scatterMap"></div>
+    </section>
+
+    <section class="panel">
+      <h2>优化点</h2>
+      <div class="notes">
+        <div class="note"><strong>局部 histogram</strong><br>每个 block 只统计自己负责的元素，减少全局原子操作压力。</div>
+        <div class="note"><strong>prefix scan</strong><br>对 bucket × block 的计数做扫描，得到每个 block 在每个 bucket 的全局起点。</div>
+        <div class="note"><strong>稳定 scatter</strong><br>位置 = bucket 全局起点 + block 偏移 + block 内同 digit 的局部 rank。</div>
+        <div class="note"><strong>ping-pong buffer</strong><br>每轮从 input 读、向 output 写，然后交换指针，避免原地搬移冲突。</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const input = [
+      { value: 9, label: "9a" },
+      { value: 1, label: "1" },
+      { value: 5, label: "5" },
+      { value: 9, label: "9b" },
+      { value: 2, label: "2" },
+      { value: 6, label: "6" },
+      { value: 10, label: "10" },
+      { value: 14, label: "14" },
+      { value: 3, label: "3" },
+      { value: 7, label: "7" },
+      { value: 11, label: "11" },
+      { value: 15, label: "15" }
+    ];
+
+    const shift = 0;
+    const radix = 4;
+    const blockSize = 4;
+    const phases = ["block histogram", "global prefix", "parallel scatter", "ping-pong swap"];
+
+    function digitOf(item) {
+      return (item.value >>> shift) & (radix - 1);
+    }
+
+    function blockIdOf(index) {
+      return Math.floor(index / blockSize);
+    }
+
+    function buildState() {
+      const blockCount = Math.ceil(input.length / blockSize);
+      const hist = Array.from({ length: blockCount }, () => Array(radix).fill(0));
+      const blockItems = Array.from({ length: blockCount }, () => []);
+
+      input.forEach((item, index) => {
+        const block = blockIdOf(index);
+        const digit = digitOf(item);
+        hist[block][digit]++;
+        blockItems[block].push({ item, index, digit });
+      });
+
+      const bucketTotals = Array(radix).fill(0);
+      for (let b = 0; b < blockCount; ++b) {
+        for (let d = 0; d < radix; ++d) bucketTotals[d] += hist[b][d];
+      }
+
+      const bucketBase = Array(radix).fill(0);
+      for (let d = 1; d < radix; ++d) bucketBase[d] = bucketBase[d - 1] + bucketTotals[d - 1];
+
+      const blockPrefix = Array.from({ length: blockCount }, () => Array(radix).fill(0));
+      for (let d = 0; d < radix; ++d) {
+        let sum = 0;
+        for (let b = 0; b < blockCount; ++b) {
+          blockPrefix[b][d] = sum;
+          sum += hist[b][d];
+        }
+      }
+
+      const localSeen = Array.from({ length: blockCount }, () => Array(radix).fill(0));
+      const output = Array(input.length).fill(null);
+      const placements = [];
+
+      input.forEach((item, index) => {
+        const block = blockIdOf(index);
+        const digit = digitOf(item);
+        const localRank = localSeen[block][digit]++;
+        const pos = bucketBase[digit] + blockPrefix[block][digit] + localRank;
+        output[pos] = item;
+        placements.push({ item, from: index, to: pos, block, digit, localRank, bucketBase: bucketBase[digit], blockPrefix: blockPrefix[block][digit] });
+      });
+
+      return { blockCount, hist, blockItems, bucketTotals, bucketBase, blockPrefix, output, placements };
+    }
+
+    const state = buildState();
+    const steps = [
+      {
+        phase: "block histogram",
+        title: "1. block histogram / local count",
+        explain: "GPU 不是先做一个全局 count，而是让每个 block 统计自己那一段 input 的 digit 分布。这样可以把大量访问留在 block 内部。",
+        formula: "hist[block][digit]++",
+        showOutput: false,
+        showScan: false,
+        showScatter: false
+      },
+      {
+        phase: "global prefix",
+        title: "2. global prefix / scan histograms",
+        explain: "把所有 block 的局部 histogram 做两层前缀：先得到每个 bucket 的全局起点，再得到每个 block 在该 bucket 内的偏移。",
+        formula: "pos_base = bucketBase[digit] + blockPrefix[block][digit]",
+        showOutput: false,
+        showScan: true,
+        showScatter: false
+      },
+      {
+        phase: "parallel scatter",
+        title: "3. parallel scatter",
+        explain: "每个线程负责一个元素。它用 bucketBase、blockPrefix 和 block 内 local rank 算出唯一写入位置。相同 digit 按原始扫描顺序保持稳定。",
+        formula: "pos = bucketBase[d] + blockPrefix[b][d] + localRankInBlock[d]",
+        showOutput: true,
+        showScan: true,
+        showScatter: true
+      },
+      {
+        phase: "ping-pong swap",
+        title: "4. ping-pong swap buffers",
+        explain: "这一轮 scatter 完成后，output 变成下一轮的 input。实际代码通常只交换 buffer 指针，不复制数据。",
+        formula: "swap(inputBuffer, outputBuffer)",
+        showOutput: true,
+        showScan: true,
+        showScatter: true
+      }
+    ];
+
+    let stepIndex = 0;
+    let timer = null;
+
+    const phasebarEl = document.getElementById("phasebar");
+    const titleEl = document.getElementById("title");
+    const passEl = document.getElementById("pass");
+    const explainEl = document.getElementById("explain");
+    const formulaEl = document.getElementById("formula");
+    const inputArrayEl = document.getElementById("inputArray");
+    const outputArrayEl = document.getElementById("outputArray");
+    const blocksEl = document.getElementById("blocks");
+    const scanMatrixEl = document.getElementById("scanMatrix");
+    const scatterMapEl = document.getElementById("scatterMap");
+    const prevBtn = document.getElementById("prev");
+    const nextBtn = document.getElementById("next");
+    const playBtn = document.getElementById("play");
+    const resetBtn = document.getElementById("reset");
+
+    function renderArray(el, items, output) {
+      el.innerHTML = "";
+      for (let i = 0; i < items.length; ++i) {
+        const item = items[i];
+        const card = document.createElement("div");
+        if (item === null) {
+          card.className = "card empty";
+          card.innerHTML = `<div><div class="num">[${i}]</div><div class="meta">empty</div></div>`;
+        } else {
+          card.className = output ? "card temp" : "card";
+          card.innerHTML = `<div><div class="num">${item.label}</div><div class="meta">idx ${i}</div><div class="meta">digit ${digitOf(item)}</div></div>`;
+        }
+        el.appendChild(card);
+      }
+    }
+
+    function renderBlocks() {
+      blocksEl.innerHTML = "";
+      for (let b = 0; b < state.blockCount; ++b) {
+        const div = document.createElement("div");
+        div.className = "block";
+        div.innerHTML = `
+          <div class="block-title">Block ${b}</div>
+          <div class="threads">
+            ${state.blockItems[b].map(x => `<div class="thread">${x.item.label}<div class="meta">i=${x.index}</div><div class="meta">d=${x.digit}</div></div>`).join("")}
+          </div>
+          <div class="hist">
+            ${state.hist[b].map((v, d) => `<div class="hist-cell ${v ? "hot" : ""}">d${d}<br><strong>${v}</strong></div>`).join("")}
+          </div>
+        `;
+        blocksEl.appendChild(div);
+      }
+    }
+
+    function renderScan(show) {
+      if (!show) {
+        scanMatrixEl.innerHTML = `<p class="explain">到 global prefix 阶段会显示 bucketBase 和 blockPrefix。</p>`;
+        return;
+      }
+
+      let html = `<table><thead><tr><th>bucket digit</th><th>bucket total</th><th>bucketBase</th>`;
+      for (let b = 0; b < state.blockCount; ++b) html += `<th>block ${b} prefix</th>`;
+      html += `</tr></thead><tbody>`;
+      for (let d = 0; d < radix; ++d) {
+        html += `<tr><td>d${d}</td><td>${state.bucketTotals[d]}</td><td>${state.bucketBase[d]}</td>`;
+        for (let b = 0; b < state.blockCount; ++b) html += `<td>${state.blockPrefix[b][d]}</td>`;
+        html += `</tr>`;
+      }
+      html += `</tbody></table>`;
+      scanMatrixEl.innerHTML = html;
+    }
+
+    function renderScatter(show) {
+      scatterMapEl.innerHTML = "";
+      if (!show) {
+        scatterMapEl.innerHTML = `<p class="explain">到 parallel scatter 阶段会显示每个线程的 data[i] → output[j] 映射。</p>`;
+        return;
+      }
+
+      for (const p of state.placements) {
+        const div = document.createElement("div");
+        div.className = "map-card";
+        div.innerHTML = `
+          <div class="node">in[${p.from}]<div class="detail">${p.item.label}</div></div>
+          <div class="arrow">→</div>
+          <div class="node temp-node">out[${p.to}]<div class="detail">d${p.digit}, B${p.block}</div></div>
+          <div class="detail">${p.bucketBase} + ${p.blockPrefix} + ${p.localRank}</div>
+        `;
+        scatterMapEl.appendChild(div);
+      }
+    }
+
+    function renderPhasebar(step) {
+      phasebarEl.innerHTML = "";
+      for (const phase of phases) {
+        const div = document.createElement("div");
+        div.className = "phase";
+        if (step.phase === phase) div.classList.add("active");
+        div.textContent = phase;
+        phasebarEl.appendChild(div);
+      }
+    }
+
+    function render() {
+      const step = steps[stepIndex];
+      titleEl.textContent = step.title;
+      passEl.textContent = "shift = 0, radix = 4";
+      explainEl.textContent = step.explain;
+      formulaEl.textContent = step.formula;
+
+      renderPhasebar(step);
+      renderArray(inputArrayEl, step.phase === "ping-pong swap" ? state.output : input, false);
+      renderArray(outputArrayEl, step.showOutput ? state.output : Array(input.length).fill(null), true);
+      renderBlocks();
+      renderScan(step.showScan);
+      renderScatter(step.showScatter);
+
+      prevBtn.disabled = stepIndex === 0;
+      nextBtn.disabled = stepIndex === steps.length - 1;
+    }
+
+    function stopPlay() {
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+        playBtn.textContent = "自动播放";
+      }
+    }
+
+    prevBtn.addEventListener("click", () => { stopPlay(); stepIndex = Math.max(0, stepIndex - 1); render(); });
+    nextBtn.addEventListener("click", () => { stopPlay(); stepIndex = Math.min(steps.length - 1, stepIndex + 1); render(); });
+    resetBtn.addEventListener("click", () => { stopPlay(); stepIndex = 0; render(); });
+    playBtn.addEventListener("click", () => {
+      if (timer !== null) { stopPlay(); return; }
+      playBtn.textContent = "暂停";
+      timer = setInterval(() => {
+        if (stepIndex === steps.length - 1) { stopPlay(); return; }
+        stepIndex++;
+        render();
+      }, 1500);
+    });
+
+    render();
+  </script>
+</body>
+</html>
